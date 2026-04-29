@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS = {
   crop: "Cantaloupe",
   trial: "FieldTrial1",
   plantsPerPlot: DEFAULT_PLANTS_PER_PLOT,
+  collectionLevel: "plant", // "hill" = one record per hill/line; "plant" = multiple plant records within each hill/line
   autoNext: true,
   defaultTraitKey: "fruit_weight_kg",
 };
@@ -74,6 +75,7 @@ function baseRecord({ settings = DEFAULT_SETTINGS, trial, block = "Rep1", row = 
     Genotype: genotype,
     EntryClass: entryClass(genotype, entry_class),
     PlantsPerPlot: settings.plantsPerPlot,
+    CollectionLevel: settings.collectionLevel || "plant",
     crop: settings.crop,
     fruit_weight_kg: "",
     brix: "",
@@ -88,13 +90,35 @@ function baseRecord({ settings = DEFAULT_SETTINGS, trial, block = "Rep1", row = 
 function makeRecordsFromDefaultLayout(settings = DEFAULT_SETTINGS) {
   const records = [];
   let plotCount = 1;
+  const plantsPerPlot = settings.collectionLevel === "hill" ? 1 : Number(settings.plantsPerPlot || 1);
+
   DEFAULT_LAYOUT.forEach((rowData, rowIndex) => {
     rowData.forEach((genotype, colIndex) => {
       const plot = colIndex + 1;
       const rep = repFromPlot(plot);
       const plot_id = `H${String(plotCount).padStart(3, "0")}`;
-      for (let plant = 1; plant <= Number(settings.plantsPerPlot || 1); plant++) {
-        records.push(baseRecord({ settings, trial: settings.trial, block: `Rep${rep}`, row: rowIndex + 1, plot, plot_id, plant_number: plant, genotype, rep }));
+
+      for (let plant = 1; plant <= plantsPerPlot; plant++) {
+        const rec = baseRecord({
+          settings: { ...settings, plantsPerPlot },
+          trial: settings.trial,
+          block: `Rep${rep}`,
+          row: rowIndex + 1,
+          plot,
+          plot_id,
+          plant_number: settings.collectionLevel === "hill" ? "" : plant,
+          genotype,
+          rep,
+        });
+        if (settings.collectionLevel === "hill") {
+          rec.plant_id = plot_id;
+          rec.barcode = plot_id;
+          rec.PlantNumber = "";
+          rec.CollectionLevel = "hill";
+        } else {
+          rec.CollectionLevel = "plant";
+        }
+        records.push(rec);
       }
       plotCount++;
     });
@@ -111,22 +135,25 @@ function parseCSV(text, traits, settings) {
     const row = {};
     headers.forEach((h, idx) => (row[h] = values[idx] ?? ""));
 
-    const plantsPerPlot = Number(pick(row, ["PlantsPerPlot", "plants_per_plot", "PlantsPerHill", "plants_per_hill"], settings.plantsPerPlot || 1));
+    const collectionLevel = pick(row, ["CollectionLevel", "collection_level", "Level", "level"], settings.collectionLevel || "plant");
+    const plantsPerPlot = collectionLevel === "hill" ? 1 : Number(pick(row, ["PlantsPerPlot", "plants_per_plot", "PlantsPerHill", "plants_per_hill"], settings.plantsPerPlot || 1));
     const rowNo = Number(pick(row, ["Row", "ROW", "row", "field_row"], Math.floor(i / (12 * plantsPerPlot)) + 1));
     const plot = Number(pick(row, ["Plot", "plot", "Hill", "hill", "PlotNumber", "plot_number", "HillNumber", "hill_number"], (Math.floor(i / plantsPerPlot) % 12) + 1));
     const plantNo = Number(pick(row, ["PlantNumber", "plant_number", "Plant", "plant", "plant_no"], (i % plantsPerPlot) + 1));
     const rep = Number(pick(row, ["Rep", "REP", "rep", "Replication", "replication", "Block", "block"], repFromPlot(plot)));
     const genotype = pick(row, ["Genotype", "GENOTYPE", "genotype", "Entry", "entry", "Accession", "accession", "Cultivar", "cultivar"], `Entry-${i + 1}`);
     const plotID = pick(row, ["PlotID", "plot_id", "PlotId", "HillID", "hill_id", "HillId"], `H${String(Math.floor(i / plantsPerPlot) + 1).padStart(3, "0")}`);
-    const plantID = pick(row, ["plant_id", "PlantID", "PlantId", "barcode", "Barcode"], `${plotID}_P${String(plantNo).padStart(2, "0")}`);
+    const plantID = collectionLevel === "hill"
+      ? pick(row, ["plant_id", "PlantID", "PlantId", "plot_id", "PlotID", "barcode", "Barcode"], plotID)
+      : pick(row, ["plant_id", "PlantID", "PlantId", "barcode", "Barcode"], `${plotID}_P${String(plantNo).padStart(2, "0")}`);
     const trial = pick(row, ["Trial", "TRIAL", "trial", "Environment", "ENV", "env"], settings.trial);
     const block = pick(row, ["Block", "BLOCK", "block"], `Rep${rep}`);
     const crop = pick(row, ["crop", "Crop", "CROP"], settings.crop);
     const entryCls = pick(row, ["EntryClass", "entry_class", "Class", "class"], entryClass(genotype));
 
-    const p = baseRecord({ settings: { ...settings, crop, trial, plantsPerPlot }, trial, block, row: rowNo, plot, plot_id: plotID, plant_number: plantNo, genotype, rep, entry_class: entryCls });
+    const p = baseRecord({ settings: { ...settings, crop, trial, plantsPerPlot, collectionLevel }, trial, block, row: rowNo, plot, plot_id: plotID, plant_number: collectionLevel === "hill" ? "" : plantNo, genotype, rep, entry_class: entryCls });
     traits.forEach((t) => { if (row[t.key] !== undefined) p[t.key] = row[t.key]; });
-    return { ...p, ...row, plant_id: plantID, barcode: pick(row, ["barcode", "Barcode", "BARCODE"], plantID), PlotID: plotID, Trial: trial, Environment: pick(row, ["Environment", "ENV", "env"], trial), Block: block, Row: rowNo, Plot: plot, Hill: plot, PlantNumber: plantNo, Rep: rep, Genotype: genotype, EntryClass: entryCls, PlantsPerPlot: plantsPerPlot, crop };
+    return { ...p, ...row, plant_id: plantID, barcode: pick(row, ["barcode", "Barcode", "BARCODE"], plantID), PlotID: plotID, Trial: trial, Environment: pick(row, ["Environment", "ENV", "env"], trial), Block: block, Row: rowNo, Plot: plot, Hill: plot, PlantNumber: collectionLevel === "hill" ? "" : plantNo, Rep: rep, Genotype: genotype, EntryClass: entryCls, PlantsPerPlot: plantsPerPlot, CollectionLevel: collectionLevel, crop };
   });
 }
 
@@ -264,17 +291,18 @@ export default function FieldBookOfflineApp() {
       const crop = imported[0].crop || settings.crop;
       const trial = imported[0].Trial || settings.trial;
       const plantsPerPlot = Number(imported[0].PlantsPerPlot || settings.plantsPerPlot || 1);
-      setSettings((s) => ({ ...s, crop, trial, plantsPerPlot }));
+      const collectionLevel = imported[0].CollectionLevel || settings.collectionLevel || "plant";
+      setSettings((s) => ({ ...s, crop, trial, plantsPerPlot, collectionLevel }));
       setRecords(imported); setSelectedId(imported[0].plant_id);
     }
     e.target.value = "";
   }
   function downloadCSV(filename, text) { const blob = new Blob([text], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url); }
-  function exportRawCSV() { const headers = ["plant_id", "barcode", "PlotID", "crop", "Trial", "Environment", "Block", "Row", "Plot", "Hill", "PlantNumber", "Rep", "Genotype", "EntryClass", "PlantsPerPlot", ...traits.map((t) => t.key), "notes", "timestamp"]; downloadCSV(`${safeKey(settings.crop)}_plant_level_raw_data.csv`, toCSV(records, headers)); }
-  function exportBLUPCSV() { const headers = ["Genotype", "EntryClass", "crop", "Environment", "Trial", "Rep", "Block", "Row", "Plot", "PlotID", "PlantNumber", "plant_id", ...traits.map((t) => t.key), "notes"]; downloadCSV(`${safeKey(settings.crop)}_PLANT_LEVEL_BLUP_READY.csv`, toCSV(records.map((p) => ({ ...p, Environment: p.Environment || p.Trial })), headers)); }
+  function exportRawCSV() { const headers = ["plant_id", "barcode", "PlotID", "crop", "Trial", "Environment", "Block", "Row", "Plot", "Hill", "PlantNumber", "Rep", "Genotype", "EntryClass", "PlantsPerPlot", "CollectionLevel", ...traits.map((t) => t.key), "notes", "timestamp"]; downloadCSV(`${safeKey(settings.crop)}_plant_level_raw_data.csv`, toCSV(records, headers)); }
+  function exportBLUPCSV() { const headers = ["Genotype", "EntryClass", "crop", "Environment", "Trial", "Rep", "Block", "Row", "Plot", "PlotID", "PlantNumber", "plant_id", "CollectionLevel", ...traits.map((t) => t.key), "notes"]; downloadCSV(`${safeKey(settings.crop)}_PLANT_LEVEL_BLUP_READY.csv`, toCSV(records.map((p) => ({ ...p, Environment: p.Environment || p.Trial })), headers)); }
   function exportTemplate() {
     const sample = makeRecordsFromDefaultLayout(settings);
-    const headers = ["plant_id", "barcode", "PlotID", "crop", "Trial", "Environment", "Block", "Row", "Plot", "PlantNumber", "Rep", "Genotype", "EntryClass", "PlantsPerPlot"];
+    const headers = ["plant_id", "barcode", "PlotID", "crop", "Trial", "Environment", "Block", "Row", "Plot", "PlantNumber", "Rep", "Genotype", "EntryClass", "PlantsPerPlot", "CollectionLevel"];
     downloadCSV(`${safeKey(settings.crop)}_field_map_template.csv`, toCSV(sample, headers));
   }
   function findBarcode(code) {
@@ -322,7 +350,15 @@ export default function FieldBookOfflineApp() {
                 <Button onClick={addRecord} variant="outline" className="rounded-2xl"><PlusCircle className="mr-2" size={15} /> Plant</Button>
                 <Button onClick={() => setShowLayout(!showLayout)} variant="outline" className="rounded-2xl"><MapIcon className="mr-2" size={15} /> Layout</Button>
               </div>
-              {showSettings && <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-2xl"><Field label="Crop" value={settings.crop} onChange={(v) => setSettings((s) => ({ ...s, crop: v }))} /><Field label="Trial" value={settings.trial} onChange={(v) => setSettings((s) => ({ ...s, trial: v }))} /><Field label="Plants/plot" type="number" value={settings.plantsPerPlot} onChange={(v) => setSettings((s) => ({ ...s, plantsPerPlot: Number(v) || 1 }))} /><label className="text-xs font-semibold text-slate-600 flex items-center gap-2 mt-6"><input type="checkbox" checked={settings.autoNext} onChange={(e) => setSettings((s) => ({ ...s, autoNext: e.target.checked }))} /> Auto-next</label></div>}
+              {showSettings && <div className="grid grid-cols-2 gap-2 bg-slate-50 p-2 rounded-2xl"><Field label="Crop" value={settings.crop} onChange={(v) => setSettings((s) => ({ ...s, crop: v }))} /><Field label="Trial" value={settings.trial} onChange={(v) => setSettings((s) => ({ ...s, trial: v }))} /><Field label="Plants/plot" type="number" value={settings.plantsPerPlot} onChange={(v) => setSettings((s) => ({ ...s, plantsPerPlot: Number(v) || 1 }))} />
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Collect by</label>
+                  <select value={settings.collectionLevel} onChange={(e) => setSettings((s) => ({ ...s, collectionLevel: e.target.value }))} className="w-full rounded-2xl border border-slate-200 p-2.5 text-sm bg-white outline-none focus:ring-2 focus:ring-emerald-500">
+                    <option value="hill">Hill/line only</option>
+                    <option value="plant">Plant within hill/line</option>
+                  </select>
+                </div>
+                <label className="text-xs font-semibold text-slate-600 flex items-center gap-2 mt-6"><input type="checkbox" checked={settings.autoNext} onChange={(e) => setSettings((s) => ({ ...s, autoNext: e.target.checked }))} /> Auto-next</label></div>}
               <div className="flex gap-2"><input value={newTrait} onChange={(e) => setNewTrait(e.target.value)} placeholder="Add trait e.g. rind thickness" className="flex-1 rounded-2xl border border-slate-200 p-2 text-sm" /><Button onClick={addTrait} className="rounded-2xl bg-emerald-700">Add</Button></div>
               <div className="flex gap-1 overflow-x-auto pb-1">{traits.map((t) => <button key={t.key} onClick={() => removeTrait(t.key)} className="text-[10px] bg-slate-100 rounded-full px-2 py-1 whitespace-nowrap">{t.label} ×</button>)}</div>
             </div>
@@ -343,7 +379,7 @@ export default function FieldBookOfflineApp() {
                 Next plant
               </Button>
             </div>
-            <p className="text-center text-[11px] text-slate-400">Fast entry: use the bottom Next/Previous buttons or swipe left/right to move between plants. Data saves offline on this device.</p>
+            <p className="text-center text-[11px] text-slate-400">Fast entry: choose hill/line-level or plant-within-hill/line data collection in Settings. Use bottom buttons or swipe left/right to move between records.</p>
           </div>
           {scannerOpen && <ScannerModal onClose={() => setScannerOpen(false)} manualBarcode={manualBarcode} setManualBarcode={setManualBarcode} onFind={findBarcode} />}
         </div>
