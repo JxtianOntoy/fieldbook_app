@@ -155,6 +155,8 @@ export default function FieldBookOfflineApp() {
   const fileRef = useRef(null);
   const firstTraitRef = useRef(null);
   const traitRefs = useRef({});
+  const touchStartX = useRef(null);
+  const touchStartY = useRef(null);
 
   useEffect(() => { localStorage.setItem("fieldbook-plant-records", JSON.stringify(records)); }, [records]);
   useEffect(() => { localStorage.setItem("fieldbook-traits", JSON.stringify(traits)); }, [traits]);
@@ -203,6 +205,20 @@ export default function FieldBookOfflineApp() {
         if (nextTrait) traitRefs.current[nextTrait]?.focus();
       }
     }
+  }
+  function handleTouchStart(e) {
+    touchStartX.current = e.touches[0].clientX;
+    touchStartY.current = e.touches[0].clientY;
+  }
+  function handleTouchEnd(e) {
+    if (touchStartX.current == null || touchStartY.current == null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX.current;
+    const dy = e.changedTouches[0].clientY - touchStartY.current;
+    touchStartX.current = null;
+    touchStartY.current = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0) goNext();
+    else goPrev();
   }
   function addTrait() {
     const label = newTrait.trim();
@@ -289,7 +305,7 @@ export default function FieldBookOfflineApp() {
             <div className="mt-4 grid grid-cols-3 gap-2 text-center"><Stat value={uniquePlots} label="Plots" /><Stat value={records.length} label="Plants" /><Stat value={completed} label="Scored" /></div>
           </div>
 
-          <div className="p-4 space-y-4">
+          <div className="p-4 space-y-4" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
             <div className="grid grid-cols-2 gap-2">
               <select value={repFilter} onChange={(e) => setRepFilter(e.target.value)} className="rounded-2xl border border-slate-200 p-2.5 text-sm bg-white outline-none">{reps.map((r) => <option key={r} value={r}>{r === "All" ? "All reps" : `Rep ${r}`}</option>)}</select>
               <Button onClick={() => setScannerOpen(true)} className="rounded-2xl bg-slate-900 hover:bg-slate-800"><QrCode className="mr-2" size={16} /> Barcode</Button>
@@ -321,7 +337,7 @@ export default function FieldBookOfflineApp() {
 
             <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={importFieldMap} />
             <div className="grid grid-cols-2 gap-2"><Button onClick={saveNow} className="rounded-2xl bg-emerald-700 hover:bg-emerald-800"><Save className="mr-2" size={16} /> {savedFlash ? "Saved" : "Save"}</Button><Button onClick={exportRawCSV} variant="outline" className="rounded-2xl"><Download className="mr-2" size={16} /> Raw CSV</Button><Button onClick={exportBLUPCSV} variant="outline" className="rounded-2xl"><Download className="mr-2" size={16} /> BLUP CSV</Button><Button onClick={deleteSelected} variant="outline" className="rounded-2xl text-red-600"><Trash2 className="mr-2" size={16} /> Delete</Button></div>
-            <p className="text-center text-[11px] text-slate-400">Fast entry: type a trait value and press Enter to jump to the next plant. Add to Home Screen after installing PWA files for laptop-free offline use.</p>
+            <p className="text-center text-[11px] text-slate-400">Fast entry: use the big Next/Previous buttons or swipe left/right to move between plants. Data saves offline on this device.</p>
           </div>
           {scannerOpen && <ScannerModal onClose={() => setScannerOpen(false)} manualBarcode={manualBarcode} setManualBarcode={setManualBarcode} onFind={findBarcode} />}
         </div>
